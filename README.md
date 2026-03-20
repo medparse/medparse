@@ -8,6 +8,7 @@ High-performance HL7v2 message parser for Go. Zero dependencies.
 - **Complete** — Full HL7v2 hierarchy: Message → Segment → Field → Component → Sub-component
 - **Read & Write** — Terser-style `Get("PID-5-1")` and `Set("PID-5-1", "SMITH")`
 - **Roundtrippable** — Parse → modify → `msg.String()` re-serializes back to HL7
+- **Mapping** — Declarative field mapping layer to handle differences between EHRs
 - **MLLP-aware** — Automatic detection and stripping of MLLP framing
 - **Escape-aware** — Decodes HL7 escape sequences (`\F\`, `\S\`, `\T\`, `\R\`, `\E\`)
 - **Validating** — Opt-in required-segment validation per message type
@@ -114,6 +115,22 @@ msg.Version()                        // "2.5.1"
 msg.String()                         // re-serialize to HL7 pipe format
 msg.ToJSON()                         // JSON serialization
 msg.ACK("AA", "")                    // generate ACK response
+```
+
+### Mapping (EHR differences)
+
+```go
+import "github.com/medparse/medparse/mapping"
+
+epic := mapping.FieldMap{
+	"last_name": "PID-5-1",
+	"mrn":       "PID-3-1",
+}
+val, _ := epic.Get(msg, "last_name")
+
+// Extractor for complex logic
+ext := mapping.NewExtractor(epic).
+	WithFunc("primary_dx", mapping.SegmentWhere("DG1", 6, "A", 3, 1))
 ```
 
 ### Validation

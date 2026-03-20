@@ -51,6 +51,7 @@ func Parse(raw string) (*Message, error) {
 	return &Message{
 		Raw:      raw,
 		Segments: segments,
+		Enc:      *enc,
 	}, nil
 }
 

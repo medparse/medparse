@@ -4,11 +4,13 @@ High-performance HL7v2 message parser for Go. Zero dependencies.
 
 ## Features
 
-- **Fast** — Parses 10K segments in ~30ms
+- **Fast** — 8μs per message, 10K segments in 30ms
 - **Complete** — Full HL7v2 hierarchy: Message → Segment → Field → Component → Sub-component
-- **Ergonomic** — Terser-style path access (`msg.Get("PID-5-1")`)
+- **Read & Write** — Terser-style `Get("PID-5-1")` and `Set("PID-5-1", "SMITH")`
+- **Roundtrippable** — Parse → modify → `msg.String()` re-serializes back to HL7
 - **MLLP-aware** — Automatic detection and stripping of MLLP framing
 - **Escape-aware** — Decodes HL7 escape sequences (`\F\`, `\S\`, `\T\`, `\R\`, `\E\`)
+- **Validating** — Opt-in required-segment validation per message type
 - **Serializable** — Built-in JSON serialization
 - **Batch-ready** — Parse FHS/BHS-wrapped multi-message files
 - **Zero dependencies** — Standard library only
@@ -42,31 +44,37 @@ func main() {
 		log.Fatal(err)
 	}
 
-	// Segment access
-	pid, _ := msg.Segment("PID")
-	dg1s := msg.SegmentsByName("DG1")
+	// Terser-style read
+	lastName, _ := msg.Get("PID-5-1")   // "DOE"
+	msgType, _ := msg.Get("MSH-9-1")    // "ADT"
+	fmt.Println(lastName, msgType)
 
-	// Field access (1-indexed, per HL7 spec)
-	nameField, _ := pid.Field(5)
-	lastName, _ := nameField.Component(1)   // "DOE"
-	firstName, _ := nameField.Component(2)  // "JANE"
+	// Terser-style write
+	msg.Set("PID-5-1", "SMITH")
 
-	// Terser-style shorthand
-	val, _ := msg.Get("PID-5-1")   // "DOE"
-	mtype, _ := msg.Get("MSH-9-1") // "ADT"
+	// Re-serialize back to HL7
+	raw := msg.String()
 
-	// MSH convenience methods
-	et, trig, _ := msg.MessageType() // "ADT", "A01"
-	cid, _ := msg.ControlID()        // "MSG001"
-	ver, _ := msg.Version()           // "2.5.1"
+	// Convenience methods
+	et, trig, _ := msg.MessageType()  // "ADT", "A01"
+	cid, _ := msg.ControlID()          // "MSG001"
 
-	// Serialization
-	jsonStr, _ := msg.ToJSON()
+	// Segment iteration
+	msg.EachSegment("DG1", func(i int, seg *medparse.Segment) error {
+		f, _ := seg.Field(3)
+		fmt.Println(i, f.Components[0].Value)
+		return nil
+	})
+
+	// Validation
+	if err := msg.Validate(); err != nil {
+		log.Println("invalid:", err)
+	}
 
 	// ACK generation
 	ack, _ := msg.ACK("AA", "")
 
-	fmt.Println(lastName.Value, firstName.Value, val, mtype, et, trig, cid, ver, len(dg1s), len(jsonStr), len(ack))
+	fmt.Println(et, trig, cid, len(raw), len(ack))
 }
 ```
 
@@ -81,18 +89,37 @@ ts, err := medparse.ParseTimestamp(raw)      // HL7 timestamp → time.Time
 d, err := medparse.ParseDate(raw)           // HL7 timestamp → date only
 ```
 
+### Reading & Writing
+
+```go
+msg.Get("PID-5-1")                   // terser read
+msg.Get("OBX(1)-5")                  // segment repetition (0-based)
+msg.Set("PID-5-1", "SMITH")          // terser write (auto-extends)
+```
+
 ### Message Access
 
 ```go
 msg.Segment("PID")                   // first matching segment
 msg.SegmentsByName("OBX")            // all matching segments
-msg.Get("PID-5-1")                   // terser-style path access
-msg.Get("OBX(1)-5")                  // segment repetition (0-based)
+msg.EachSegment("OBX", func(i int, seg *Segment) error { ... })
 msg.MessageType()                    // ("ADT", "A01")
 msg.ControlID()                      // "MSG001"
 msg.Version()                        // "2.5.1"
-msg.ACK("AA", "")                    // generate ACK response
+```
+
+### Serialization & Output
+
+```go
+msg.String()                         // re-serialize to HL7 pipe format
 msg.ToJSON()                         // JSON serialization
+msg.ACK("AA", "")                    // generate ACK response
+```
+
+### Validation
+
+```go
+err := msg.Validate()                // check required segments for message type
 ```
 
 ### MLLP
@@ -100,6 +127,30 @@ msg.ToJSON()                         // JSON serialization
 ```go
 medparse.IsMLLPFramed(data)          // detect MLLP framing
 medparse.StripMLLP(raw)              // strip framing (Parse does this automatically)
+```
+
+### Error Handling
+
+```go
+// Sentinel errors for errors.Is
+errors.Is(err, medparse.ErrParse)     // parse failures
+errors.Is(err, medparse.ErrNotFound)  // missing segment
+errors.Is(err, medparse.ErrIndex)     // out of range
+
+// Typed errors for errors.As
+var ke *medparse.KeyError
+errors.As(err, &ke)                   // ke.Name == "ZZZ"
+```
+
+## Benchmarks
+
+```
+BenchmarkParse-8               133441     8315 ns/op     7440 B/op    199 allocs/op
+BenchmarkParseLarge-8              40  29559748 ns/op 23678806 B/op 570119 allocs/op
+BenchmarkGet-8               12444850      105 ns/op       56 B/op      2 allocs/op
+BenchmarkSet-8                 183168     6372 ns/op     6200 B/op    168 allocs/op
+BenchmarkParseTimestamp-8     6494740      221 ns/op       32 B/op      4 allocs/op
+BenchmarkString-8             2960448      399 ns/op      408 B/op     11 allocs/op
 ```
 
 ## License

@@ -3,9 +3,14 @@
 // It supports the full HL7v2 hierarchy (Message → Segment → Field → Component →
 // Sub-component), MLLP framing, escape sequences, terser-style path access,
 // batch parsing, timestamp parsing, and ACK generation.
+//
+// Zero external dependencies — standard library only.
 package medparse
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // EncodingChars holds the HL7v2 encoding characters extracted from the MSH segment.
 type EncodingChars struct {
@@ -82,15 +87,47 @@ func (s *Segment) Field(index int) (*Field, error) {
 	return &s.Fields[index-1], nil
 }
 
-// String returns the segment name.
+// String re-serializes the segment back to HL7 pipe-delimited format using
+// the default encoding characters.
 func (s *Segment) String() string {
-	return s.Name
+	return s.Encode(DefaultEncodingChars())
+}
+
+// Encode re-serializes the segment using the given encoding characters.
+func (s *Segment) Encode(enc EncodingChars) string {
+	if len(s.Fields) == 0 {
+		return s.Name
+	}
+
+	sep := string(enc.FieldSep)
+	isMSH := s.Name == "MSH"
+
+	var b strings.Builder
+	b.WriteString(s.Name)
+	b.WriteByte(enc.FieldSep)
+
+	startIdx := 0
+	if isMSH {
+		// MSH-1 is the field separator (already written above).
+		// MSH-2 is the encoding characters.
+		startIdx = 1
+	}
+
+	for i := startIdx; i < len(s.Fields); i++ {
+		if i > startIdx {
+			b.WriteString(sep)
+		}
+		b.WriteString(s.Fields[i].Value)
+	}
+
+	return b.String()
 }
 
 // Message represents a parsed HL7v2 message.
 type Message struct {
-	Raw      string    `json:"-"`
-	Segments []Segment `json:"segments"`
+	Raw      string        `json:"-"`
+	Segments []Segment     `json:"segments"`
+	Enc      EncodingChars `json:"-"`
 }
 
 // Segment returns the first segment matching the given name.
@@ -112,6 +149,22 @@ func (m *Message) SegmentsByName(name string) []Segment {
 		}
 	}
 	return result
+}
+
+// EachSegment iterates over all segments matching the given name.
+// The callback receives the 0-based repetition index and a pointer to the segment.
+// Return a non-nil error from the callback to stop iteration early.
+func (m *Message) EachSegment(name string, fn func(index int, seg *Segment) error) error {
+	idx := 0
+	for i := range m.Segments {
+		if m.Segments[i].Name == name {
+			if err := fn(idx, &m.Segments[i]); err != nil {
+				return err
+			}
+			idx++
+		}
+	}
+	return nil
 }
 
 // MessageType returns the message type from MSH-9, e.g. ("ADT", "A01").
@@ -196,22 +249,12 @@ func (m *Message) ToJSON() (string, error) {
 	return string(data), nil
 }
 
-// String returns a summary representation of the message.
+// String re-serializes the message back to HL7 pipe-delimited format
+// using the stored encoding characters. Segments are separated by \r.
 func (m *Message) String() string {
-	names := make([]string, len(m.Segments))
-	for i, s := range m.Segments {
-		names[i] = s.Name
+	parts := make([]string, len(m.Segments))
+	for i := range m.Segments {
+		parts[i] = m.Segments[i].Encode(m.Enc)
 	}
-	return "Message(segments=[" + joinStrings(names, ", ") + "])"
-}
-
-func joinStrings(ss []string, sep string) string {
-	if len(ss) == 0 {
-		return ""
-	}
-	result := ss[0]
-	for _, s := range ss[1:] {
-		result += sep + s
-	}
-	return result
+	return strings.Join(parts, "\r")
 }

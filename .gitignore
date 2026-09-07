@@ -2,7 +2,9 @@
 *.exe
 *.test
 *.out
+bin/
 
 # Nix
 result
 .direnv
+

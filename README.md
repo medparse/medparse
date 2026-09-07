@@ -210,6 +210,40 @@ allDx := mapping.SegmentWhereAll("DG1", 6, "A", 3, 1)
 dxCodes, _ := allDx(msg)
 ```
 
+## Command-Line Tool (`medparse`)
+
+A zero-dependency CLI for inspecting, mutating, validating, and streaming HL7v2 messages via standard UNIX pipelines or over MLLP:
+
+```bash
+go install github.com/medparse/medparse/cmd/medparse@latest
+```
+
+### Usage Examples
+
+```bash
+# Extract fields via Terser path syntax (reads from file or stdin)
+cat msg.hl7 | medparse get PID-5.1
+medparse get -all OBX-5 lab_results.hl7
+
+# Mutate messages in pipelines
+cat msg.hl7 | medparse set PID-5.1 "SMITH" | medparse get PID-5.1
+
+# Validate required segments & fields
+cat msg.hl7 | medparse validate
+medparse validate --type ADT_A01 msg.hl7
+medparse validate --fields "PID-3,PID-5.1" msg.hl7
+
+# Generate matching ACK response
+cat msg.hl7 | medparse ack -code AA
+cat msg.hl7 | medparse ack -code AE -text "Unknown patient identifier"
+
+# Send HL7 message over MLLP TCP connection
+cat msg.hl7 | medparse mllp send --addr localhost:2575
+
+# Start local MLLP listener (auto-replies with standard ACK)
+medparse mllp listen --port 2575
+```
+
 ## Benchmarks
 
 Apple M2 (arm64):

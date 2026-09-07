@@ -9,15 +9,22 @@ import (
 //
 // Path format: SEGMENT-FIELD[-COMPONENT[-SUBCOMPONENT]]
 //
+// Both dash (-) and dot (.) notations are supported (e.g. "PID-5-1" or "PID-5.1" or "PID.5.1").
+//
+// Field repetitions can be specified with parentheses:
+//   - msg.Set("PID-3(1)-1", "DEA123")
+//
 // If the target index is beyond the current length, empty fields/components
 // are auto-created to reach the specified position.
 //
 // Examples:
 //
-//	msg.Set("PID-5-1", "SMITH")   // modify last name
-//	msg.Set("PID-8", "F")         // set gender
+//	msg.Set("PID-5-1", "SMITH")     // modify last name
+//	msg.Set("PID-5.1", "SMITH")     // dot notation
+//	msg.Set("PID-8", "F")           // set gender
+//	msg.Set("PID-3(1)-1", "DEA123") // set second repetition of PID-3
 func (m *Message) Set(path, value string) error {
-	parts := strings.Split(path, "-")
+	parts := splitTerserPath(path)
 	if len(parts) < 2 {
 		return &ParseError{Msg: "set path must include at least SEGMENT-FIELD"}
 	}
@@ -47,10 +54,10 @@ func (m *Message) Set(path, value string) error {
 
 	seg := matching[segRep]
 
-	// Parse field index.
-	fieldIdx, err := strconv.Atoi(parts[1])
+	// Parse field index and optional field repetition index.
+	fieldIdx, fieldRep, err := parseFieldRef(parts[1])
 	if err != nil {
-		return &ParseError{Msg: "invalid field index: '" + parts[1] + "'"}
+		return err
 	}
 	if fieldIdx < 1 {
 		return &IndexError{Type: "field", Index: fieldIdx, Max: len(seg.Fields)}
@@ -62,11 +69,30 @@ func (m *Message) Set(path, value string) error {
 	}
 	field := &seg.Fields[fieldIdx-1]
 
+	// Determine target field (either base field or a specific repetition).
+	targetField := field
+	if fieldRep >= 0 {
+		if len(field.Repetitions) == 0 {
+			// Initialize repetitions with the existing field as repetition 0.
+			field.Repetitions = []Field{cloneField(field)}
+		}
+		for len(field.Repetitions) <= fieldRep {
+			field.Repetitions = append(field.Repetitions, emptyField())
+		}
+		targetField = &field.Repetitions[fieldRep]
+	} else if len(field.Repetitions) > 0 {
+		// No repetition specified, but repetitions exist — update repetition 0.
+		targetField = &field.Repetitions[0]
+	}
+
 	// Field-level set.
 	if len(parts) == 2 {
-		field.Value = value
-		field.Components = []Component{{Value: value, SubComponents: []string{value}}}
-		field.Repetitions = nil
+		targetField.Value = value
+		targetField.Components = []Component{{Value: value, SubComponents: []string{value}}}
+		if fieldRep < 0 {
+			field.Repetitions = nil
+		}
+		rebuildFieldValue(field, m.Enc)
 		return nil
 	}
 
@@ -76,19 +102,20 @@ func (m *Message) Set(path, value string) error {
 		return &ParseError{Msg: "invalid component index: '" + parts[2] + "'"}
 	}
 	if compIdx < 1 {
-		return &IndexError{Type: "component", Index: compIdx, Max: len(field.Components)}
+		return &IndexError{Type: "component", Index: compIdx, Max: len(targetField.Components)}
 	}
 
 	// Auto-extend components if needed.
-	for len(field.Components) < compIdx {
-		field.Components = append(field.Components, emptyComponent())
+	for len(targetField.Components) < compIdx {
+		targetField.Components = append(targetField.Components, emptyComponent())
 	}
-	comp := &field.Components[compIdx-1]
+	comp := &targetField.Components[compIdx-1]
 
 	// Component-level set.
 	if len(parts) == 3 {
 		comp.Value = value
 		comp.SubComponents = []string{value}
+		rebuildSingleFieldValue(targetField, m.Enc)
 		rebuildFieldValue(field, m.Enc)
 		return nil
 	}
@@ -109,12 +136,29 @@ func (m *Message) Set(path, value string) error {
 
 	comp.SubComponents[subIdx-1] = value
 	rebuildComponentValue(comp, m.Enc)
+	rebuildSingleFieldValue(targetField, m.Enc)
 	rebuildFieldValue(field, m.Enc)
 	return nil
 }
 
-// rebuildFieldValue reconstructs the field's Value from its components.
+// rebuildFieldValue reconstructs the field's Value from its components or repetitions.
 func rebuildFieldValue(f *Field, enc EncodingChars) {
+	if len(f.Repetitions) > 0 {
+		sep := string(enc.RepetitionSep)
+		parts := make([]string, len(f.Repetitions))
+		for i := range f.Repetitions {
+			rebuildSingleFieldValue(&f.Repetitions[i], enc)
+			parts[i] = f.Repetitions[i].Value
+		}
+		f.Value = strings.Join(parts, sep)
+		f.Components = f.Repetitions[0].Components
+		return
+	}
+	rebuildSingleFieldValue(f, enc)
+}
+
+// rebuildSingleFieldValue reconstructs a single field value from its components.
+func rebuildSingleFieldValue(f *Field, enc EncodingChars) {
 	sep := string(enc.ComponentSep)
 	parts := make([]string, len(f.Components))
 	for i, c := range f.Components {

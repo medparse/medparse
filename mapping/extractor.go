@@ -105,7 +105,7 @@ func SegmentWhere(segName string, whereField int, whereValue string, targetField
 		var result string
 		var found bool
 
-		msg.EachSegment(segName, func(i int, seg *medparse.Segment) error {
+		err := msg.EachSegment(segName, func(i int, seg *medparse.Segment) error {
 			f, err := seg.Field(whereField)
 			if err != nil {
 				return nil // skip
@@ -130,10 +130,51 @@ func SegmentWhere(segName string, whereField int, whereValue string, targetField
 			return nil
 		})
 
+		if err != nil && err != errStop {
+			return "", err
+		}
+
 		if !found {
 			return "", &errNotMatched{segName: segName, field: whereField, value: whereValue}
 		}
 		return result, nil
+	}
+}
+
+// ExtractMultiFunc is a custom extraction function that retrieves multiple values from a message.
+type ExtractMultiFunc func(msg *medparse.Message) ([]string, error)
+
+// SegmentWhereAll returns an ExtractMultiFunc that finds all segments where whereField = whereValue,
+// extracting the target field/component from each.
+func SegmentWhereAll(segName string, whereField int, whereValue string, targetField, targetComp int) ExtractMultiFunc {
+	return func(msg *medparse.Message) ([]string, error) {
+		var results []string
+		err := msg.EachSegment(segName, func(i int, seg *medparse.Segment) error {
+			f, err := seg.Field(whereField)
+			if err != nil {
+				return nil
+			}
+			if f.Value == whereValue {
+				tf, err := seg.Field(targetField)
+				if err != nil {
+					return nil
+				}
+				if targetComp > 0 {
+					comp, err := tf.Component(targetComp)
+					if err != nil {
+						return nil
+					}
+					results = append(results, comp.Value)
+				} else {
+					results = append(results, tf.Value)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		return results, nil
 	}
 }
 

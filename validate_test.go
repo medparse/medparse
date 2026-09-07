@@ -85,3 +85,38 @@ func TestErrorWrapping(t *testing.T) {
 		t.Errorf("expected 'ZZZ', got '%s'", ke.Name)
 	}
 }
+
+func TestRegisterRequiredSegments(t *testing.T) {
+	RegisterRequiredSegments("CUSTOM_C01", []string{"MSH", "PID", "Z01"})
+
+	raw := "MSH|^~\\&|S|F|R|F|20230101||CUSTOM^C01|1|P|2.5\rPID|1||MRN"
+	msg, _ := Parse(raw)
+
+	err := msg.Validate()
+	if err == nil {
+		t.Fatal("expected validation error for missing Z01 segment")
+	}
+
+	// Add Z01 segment and revalidate
+	msg.AddSegment("Z01", "CUSTOM_DATA")
+	err = msg.Validate()
+	if err != nil {
+		t.Errorf("expected valid after adding Z01, got: %v", err)
+	}
+}
+
+func TestValidateRequiredFields(t *testing.T) {
+	msg, _ := Parse(sampleADT)
+
+	// Valid fields present
+	err := msg.ValidateRequiredFields("MSH-9-1", "PID-5-1")
+	if err != nil {
+		t.Errorf("expected valid fields, got: %v", err)
+	}
+
+	// Missing / empty field
+	err = msg.ValidateRequiredFields("PID-5-1", "PID-19")
+	if err == nil {
+		t.Error("expected error for empty field PID-19")
+	}
+}

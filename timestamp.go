@@ -94,6 +94,53 @@ func splitTimezone(raw string) (string, *int) {
 	return raw[:tzStart], &offset
 }
 
+// TimestampPrecision defines the output precision for HL7v2 timestamps.
+type TimestampPrecision int
+
+const (
+	// PrecisionDay formats as YYYYMMDD.
+	PrecisionDay TimestampPrecision = iota
+	// PrecisionMinute formats as YYYYMMDDHHMM.
+	PrecisionMinute
+	// PrecisionSecond formats as YYYYMMDDHHMMSS (standard default).
+	PrecisionSecond
+	// PrecisionMilli formats as YYYYMMDDHHMMSS.sss.
+	PrecisionMilli
+	// PrecisionMicro formats as YYYYMMDDHHMMSS.ssssss.
+	PrecisionMicro
+)
+
+// FormatTimestamp formats a time.Time into an HL7v2 timestamp string.
+// If precision is omitted, PrecisionSecond (YYYYMMDDHHMMSS) is used.
+func FormatTimestamp(t time.Time, prec ...TimestampPrecision) string {
+	p := PrecisionSecond
+	if len(prec) > 0 {
+		p = prec[0]
+	}
+	switch p {
+	case PrecisionDay:
+		return t.Format("20060102")
+	case PrecisionMinute:
+		return t.Format("200601021504")
+	case PrecisionMilli:
+		return t.Format("20060102150405.000")
+	case PrecisionMicro:
+		return t.Format("20060102150405.000000")
+	default:
+		return t.Format("20060102150405")
+	}
+}
+
+// FormatTimestampWithTZ formats a time.Time into an HL7v2 timestamp string with timezone offset (±HHMM).
+func FormatTimestampWithTZ(t time.Time, prec ...TimestampPrecision) string {
+	return FormatTimestamp(t, prec...) + t.Format("-0700")
+}
+
+// FormatDate formats a time.Time as an HL7v2 date (YYYYMMDD).
+func FormatDate(t time.Time) string {
+	return t.Format("20060102")
+}
+
 // parseTimestampParts extracts year, month, day, hour, minute, second, microseconds
 // from an HL7 timestamp string (without timezone).
 func parseTimestampParts(s string) (year, month, day, hour, minute, second, micros int, err error) {
@@ -103,24 +150,43 @@ func parseTimestampParts(s string) (year, month, day, hour, minute, second, micr
 		return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("timestamp too short: '%s'", s)}
 	}
 
-	year, _ = strconv.Atoi(s[:4])
+	var errConv error
+	year, errConv = strconv.Atoi(s[:4])
+	if errConv != nil {
+		return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid year in timestamp: '%s'", s)}
+	}
 	month = 1
 	day = 1
 
 	if n >= 6 {
-		month, _ = strconv.Atoi(s[4:6])
+		month, errConv = strconv.Atoi(s[4:6])
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid month in timestamp: '%s'", s)}
+		}
 	}
 	if n >= 8 {
-		day, _ = strconv.Atoi(s[6:8])
+		day, errConv = strconv.Atoi(s[6:8])
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid day in timestamp: '%s'", s)}
+		}
 	}
 	if n >= 10 {
-		hour, _ = strconv.Atoi(s[8:10])
+		hour, errConv = strconv.Atoi(s[8:10])
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid hour in timestamp: '%s'", s)}
+		}
 	}
 	if n >= 12 {
-		minute, _ = strconv.Atoi(s[10:12])
+		minute, errConv = strconv.Atoi(s[10:12])
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid minute in timestamp: '%s'", s)}
+		}
 	}
 	if n >= 14 {
-		second, _ = strconv.Atoi(s[12:14])
+		second, errConv = strconv.Atoi(s[12:14])
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid second in timestamp: '%s'", s)}
+		}
 	}
 
 	// Fractional seconds (after the dot).
@@ -133,7 +199,10 @@ func parseTimestampParts(s string) (year, month, day, hour, minute, second, micr
 		for len(fracStr) < 6 {
 			fracStr += "0"
 		}
-		micros, _ = strconv.Atoi(fracStr)
+		micros, errConv = strconv.Atoi(fracStr)
+		if errConv != nil {
+			return 0, 0, 0, 0, 0, 0, 0, &ParseError{Msg: fmt.Sprintf("invalid fractional seconds in timestamp: '%s'", s)}
+		}
 	}
 
 	return

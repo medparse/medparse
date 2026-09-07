@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	medparse "github.com/medparse/medparse"
 )
@@ -20,15 +21,52 @@ import (
 //
 // Keys are your application's field names (e.g. "patient_last_name"),
 // values are terser paths (e.g. "PID-5-1").
+//
+// Fallback paths can be specified using pipe (|) characters, e.g.:
+//
+//	"mrn": "PID-3(0)-1|PID-3-1"
+//
+// If the first path fails or returns an empty string, subsequent fallback paths are attempted.
 type FieldMap map[string]string
 
 // Get retrieves a value from the message using the mapped path for the given key.
+// If the mapped path contains pipe-separated fallbacks, each is tried in order until
+// a non-empty value is found.
 func (fm FieldMap) Get(msg *medparse.Message, key string) (string, error) {
 	path, ok := fm[key]
 	if !ok {
 		return "", fmt.Errorf("mapping: key '%s' not found in field map", key)
 	}
+
+	if strings.Contains(path, "|") {
+		fallbacks := strings.Split(path, "|")
+		var lastErr error
+		for _, p := range fallbacks {
+			val, err := msg.Get(p)
+			if err == nil && val != "" {
+				return val, nil
+			}
+			if err != nil {
+				lastErr = err
+			}
+		}
+		if lastErr != nil {
+			return "", lastErr
+		}
+		return "", nil
+	}
+
 	return msg.Get(path)
+}
+
+// GetOrDefault retrieves a value from the message for the given key, returning defaultValue
+// if the key is not defined, not found in the message, or empty.
+func (fm FieldMap) GetOrDefault(msg *medparse.Message, key, defaultValue string) string {
+	val, err := fm.Get(msg, key)
+	if err != nil || val == "" {
+		return defaultValue
+	}
+	return val
 }
 
 // GetAll retrieves all mapped values from a message, returning a map of

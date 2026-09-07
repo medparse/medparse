@@ -1,6 +1,100 @@
 package medparse
 
-import "strconv"
+import (
+	"strconv"
+	"strings"
+)
+
+// Escape encodes special characters in a string into standard HL7v2 escape sequences.
+//
+// Special characters escaped:
+//   - Field separator (|) → \F\
+//   - Component separator (^) → \S\
+//   - Sub-component separator (&) → \T\
+//   - Repetition separator (~) → \R\
+//   - Escape character (\) → \E\
+//   - Newline (\n) / carriage return (\r) → \.br\
+//
+// If enc is nil, DefaultEncodingChars() is used.
+func Escape(value string, enc *EncodingChars) string {
+	if enc == nil {
+		def := DefaultEncodingChars()
+		enc = &def
+	}
+
+	esc := enc.EscapeChar
+	fSep := enc.FieldSep
+	cSep := enc.ComponentSep
+	sSep := enc.SubComponentSep
+	rSep := enc.RepetitionSep
+
+	// Fast path: check if any character needs escaping.
+	needsEscape := false
+	for i := 0; i < len(value); i++ {
+		b := value[i]
+		if b == esc || b == fSep || b == cSep || b == sSep || b == rSep || b == '\r' || b == '\n' {
+			needsEscape = true
+			break
+		}
+	}
+	if !needsEscape {
+		return value
+	}
+
+	var b strings.Builder
+	b.Grow(len(value) + 16)
+
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		switch ch {
+		case esc:
+			b.WriteByte(esc)
+			b.WriteByte('E')
+			b.WriteByte(esc)
+		case fSep:
+			b.WriteByte(esc)
+			b.WriteByte('F')
+			b.WriteByte(esc)
+		case cSep:
+			b.WriteByte(esc)
+			b.WriteByte('S')
+			b.WriteByte(esc)
+		case sSep:
+			b.WriteByte(esc)
+			b.WriteByte('T')
+			b.WriteByte(esc)
+		case rSep:
+			b.WriteByte(esc)
+			b.WriteByte('R')
+			b.WriteByte(esc)
+		case '\r':
+			if i+1 < len(value) && value[i+1] == '\n' {
+				i++ // skip \n in \r\n
+			}
+			b.WriteByte(esc)
+			b.WriteString(".br")
+			b.WriteByte(esc)
+		case '\n':
+			b.WriteByte(esc)
+			b.WriteString(".br")
+			b.WriteByte(esc)
+		default:
+			b.WriteByte(ch)
+		}
+	}
+
+	return b.String()
+}
+
+// Unescape decodes HL7v2 escape sequences in a string.
+// If enc is nil, DefaultEncodingChars() is used.
+func Unescape(value string, enc *EncodingChars) string {
+	if enc == nil {
+		def := DefaultEncodingChars()
+		enc = &def
+	}
+	return decodeEscapes(value, enc)
+}
 
 // decodeEscapes decodes HL7v2 escape sequences in a field value.
 //
@@ -12,18 +106,12 @@ import "strconv"
 //   - \E\ → escape character (\)
 //   - \X..\ → hex data
 //   - \.br\ → line break (→ \n)
+//   - \H\ / \N\ → highlight mode (preserved as is or stripped)
 func decodeEscapes(value string, enc *EncodingChars) string {
 	esc := enc.EscapeChar
 
 	// Fast path: no escape character present.
-	found := false
-	for i := 0; i < len(value); i++ {
-		if value[i] == esc {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if strings.IndexByte(value, esc) < 0 {
 		return value
 	}
 
@@ -67,7 +155,7 @@ func decodeEscapes(value string, enc *EncodingChars) string {
 							}
 						}
 					} else {
-						// Unknown escape — preserve as-is.
+						// Unknown or highlight escape — preserve as-is.
 						result = append(result, esc)
 						result = append(result, seq...)
 						result = append(result, esc)

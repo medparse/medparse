@@ -119,3 +119,53 @@ func TestSetRoundtrip(t *testing.T) {
 		t.Errorf("roundtrip expected 'JANE', got '%s'", val)
 	}
 }
+
+func TestSetDotNotation(t *testing.T) {
+	msg, _ := Parse(sampleADT)
+	err := msg.Set("PID.5.1", "TAYLOR")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	val, _ := msg.Get("PID-5-1")
+	if val != "TAYLOR" {
+		t.Errorf("expected 'TAYLOR', got %q", val)
+	}
+}
+
+func TestSetFieldRepetition(t *testing.T) {
+	raw := "MSH|^~\\&|S|F|R|F|20230101||ADT^A01|1|P|2.5\rPID|1||MRN123^^^MRN~DEA456^^^DEA"
+	msg, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Update second repetition
+	err = msg.Set("PID-3(1)-1", "NEWDEA")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	val, _ := msg.Get("PID-3(1)-1")
+	if val != "NEWDEA" {
+		t.Errorf("expected 'NEWDEA', got %q", val)
+	}
+
+	// First repetition should remain unchanged
+	val0, _ := msg.Get("PID-3(0)-1")
+	if val0 != "MRN123" {
+		t.Errorf("expected 'MRN123', got %q", val0)
+	}
+
+	// Verify serialization preserves both repetitions
+	serialized := msg.String()
+	msg2, err := Parse(serialized)
+	if err != nil {
+		t.Fatalf("failed to reparse serialized message: %v", err)
+	}
+
+	v0, _ := msg2.Get("PID-3(0)-1")
+	v1, _ := msg2.Get("PID-3(1)-1")
+	if v0 != "MRN123" || v1 != "NEWDEA" {
+		t.Errorf("roundtrip field repetition failed: v0=%q, v1=%q", v0, v1)
+	}
+}

@@ -1,6 +1,10 @@
 package medparse
 
-import "strings"
+import (
+	"bufio"
+	"io"
+	"strings"
+)
 
 // ParseBatch parses a batch of HL7v2 messages from a raw string.
 //
@@ -15,37 +19,49 @@ func ParseBatch(raw string) ([]*Message, error) {
 		return nil, nil
 	}
 
-	// Split the raw input into individual messages at each MSH boundary.
-	messageParts := splitIntoMessages(raw)
+	return ParseBatchReader(strings.NewReader(raw))
+}
 
-	results := make([]*Message, 0, len(messageParts))
-	for _, msgStr := range messageParts {
-		msgStr = strings.TrimSpace(msgStr)
-		if len(msgStr) == 0 || !strings.HasPrefix(msgStr, "MSH") {
-			continue
-		}
-		msg, err := Parse(msgStr)
-		if err != nil {
-			return nil, &ParseError{Msg: "error parsing message in batch: " + err.Error()}
-		}
-		results = append(results, msg)
+// ParseBatchReader parses all HL7v2 messages from an io.Reader stream.
+// Supports large batches with low memory overhead.
+func ParseBatchReader(r io.Reader) ([]*Message, error) {
+	scanner := NewBatchScanner(r)
+	var results []*Message
+	for scanner.Scan() {
+		results = append(results, scanner.Message())
 	}
-
+	if err := scanner.Err(); err != nil {
+		return nil, &ParseError{Msg: "error parsing message in batch: " + err.Error()}
+	}
 	return results, nil
 }
 
-// splitIntoMessages splits raw input into individual message strings at MSH boundaries.
-// Strips FHS, BHS, BTS, FTS header/trailer lines.
-func splitIntoMessages(raw string) []string {
-	var messages []string
-	var current strings.Builder
+// BatchScanner scans messages sequentially from an io.Reader stream.
+// It handles FHS/BHS/BTS/FTS batch wrappers and splits on MSH boundaries.
+type BatchScanner struct {
+	scanner *bufio.Scanner
+	current strings.Builder
+	msg     *Message
+	err     error
+	done    bool
+}
 
-	// Split on any line ending.
-	lines := strings.FieldsFunc(raw, func(r rune) bool {
-		return r == '\r' || r == '\n'
-	})
+// NewBatchScanner creates a new BatchScanner for the provided io.Reader.
+func NewBatchScanner(r io.Reader) *BatchScanner {
+	scanner := bufio.NewScanner(r)
+	scanner.Split(scanHL7Lines)
+	return &BatchScanner{scanner: scanner}
+}
 
-	for _, line := range lines {
+// Scan advances to the next message in the batch.
+// Returns false when the batch is finished or an error occurs.
+func (s *BatchScanner) Scan() bool {
+	if s.done || s.err != nil {
+		return false
+	}
+
+	for s.scanner.Scan() {
+		line := strings.TrimSpace(s.scanner.Text())
 		if len(line) == 0 {
 			continue
 		}
@@ -57,28 +73,81 @@ func splitIntoMessages(raw string) []string {
 
 		switch segType {
 		case "FHS", "BHS", "BTS", "FTS":
-			// Skip batch/file header and trailer segments.
+			// Skip batch and file headers/trailers.
 			continue
 		case "MSH":
-			// Start of a new message — flush the current one.
-			if current.Len() > 0 {
-				messages = append(messages, current.String())
-				current.Reset()
+			if s.current.Len() > 0 {
+				msg, err := Parse(s.current.String())
+				if err != nil {
+					s.err = err
+					return false
+				}
+				s.msg = msg
+				s.current.Reset()
+				s.current.WriteString(line)
+				return true
 			}
-			current.WriteString(line)
+			s.current.WriteString(line)
 		default:
-			// Append to current message.
-			if current.Len() > 0 {
-				current.WriteByte('\r')
+			if s.current.Len() > 0 {
+				s.current.WriteByte('\r')
 			}
-			current.WriteString(line)
+			s.current.WriteString(line)
 		}
 	}
 
-	// Flush the last message.
-	if current.Len() > 0 {
-		messages = append(messages, current.String())
+	if err := s.scanner.Err(); err != nil {
+		s.err = err
+		return false
 	}
 
-	return messages
+	if s.current.Len() > 0 {
+		msg, err := Parse(s.current.String())
+		s.current.Reset()
+		s.done = true
+		if err != nil {
+			s.err = err
+			return false
+		}
+		s.msg = msg
+		return true
+	}
+
+	s.done = true
+	return false
+}
+
+// Message returns the most recently scanned message.
+func (s *BatchScanner) Message() *Message {
+	return s.msg
+}
+
+// Err returns the first non-EOF error encountered by the scanner.
+func (s *BatchScanner) Err() error {
+	return s.err
+}
+
+// scanHL7Lines is a bufio.SplitFunc that splits lines on \r, \n, or \r\n.
+func scanHL7Lines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\r' {
+			if i+1 < len(data) && data[i+1] == '\n' {
+				return i + 2, data[:i], nil
+			}
+			return i + 1, data[:i], nil
+		}
+		if data[i] == '\n' {
+			return i + 1, data[:i], nil
+		}
+	}
+
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	return 0, nil, nil
 }

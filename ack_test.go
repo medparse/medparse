@@ -51,3 +51,39 @@ func TestACKWithErrorCode(t *testing.T) {
 		t.Errorf("unexpected ACK: %s", ack)
 	}
 }
+
+func TestBuildACKAndErrorSegment(t *testing.T) {
+	msg, err := Parse(sampleADT)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	ackMsg, err := msg.BuildACK("AE", "Validation error")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(ackMsg.Segments) != 2 {
+		t.Fatalf("expected 2 segments in ACK, got %d", len(ackMsg.Segments))
+	}
+
+	msaCode, _ := ackMsg.Get("MSA-1")
+	if msaCode != "AE" {
+		t.Errorf("expected AE, got %s", msaCode)
+	}
+
+	// Add ERR segment to ACK message
+	ackMsg.AddErrorSegment("E", "101", "Required field missing", "PID-3-1")
+	if len(ackMsg.Segments) != 3 {
+		t.Fatalf("expected 3 segments after ERR, got %d", len(ackMsg.Segments))
+	}
+
+	errLoc, _ := ackMsg.Get("ERR-1")
+	if errLoc != "PID-3-1" {
+		t.Errorf("expected PID-3-1, got %s", errLoc)
+	}
+	errSev, _ := ackMsg.Get("ERR-3")
+	if errSev != "E" {
+		t.Errorf("expected E, got %s", errSev)
+	}
+}

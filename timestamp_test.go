@@ -132,3 +132,48 @@ func TestSplitTimezoneNone(t *testing.T) {
 		t.Errorf("expected nil, got %v", tz)
 	}
 }
+
+func TestFormatTimestamp(t *testing.T) {
+	loc := time.FixedZone("EST", -5*3600)
+	tm := time.Date(2023, time.March, 15, 14, 30, 22, 123456000, loc)
+
+	if got := FormatTimestamp(tm); got != "20230315143022" {
+		t.Errorf("default format = %q, expected '20230315143022'", got)
+	}
+	if got := FormatTimestamp(tm, PrecisionDay); got != "20230315" {
+		t.Errorf("day format = %q, expected '20230315'", got)
+	}
+	if got := FormatTimestamp(tm, PrecisionMinute); got != "202303151430" {
+		t.Errorf("minute format = %q, expected '202303151430'", got)
+	}
+	if got := FormatTimestamp(tm, PrecisionMilli); got != "20230315143022.123" {
+		t.Errorf("milli format = %q, expected '20230315143022.123'", got)
+	}
+	if got := FormatTimestamp(tm, PrecisionMicro); got != "20230315143022.123456" {
+		t.Errorf("micro format = %q, expected '20230315143022.123456'", got)
+	}
+	if got := FormatTimestampWithTZ(tm); got != "20230315143022-0500" {
+		t.Errorf("with tz format = %q, expected '20230315143022-0500'", got)
+	}
+	if got := FormatDate(tm); got != "20230315" {
+		t.Errorf("FormatDate = %q, expected '20230315'", got)
+	}
+}
+
+func TestParseTimestampInvalidChars(t *testing.T) {
+	invalids := []string{
+		"202A0101",
+		"2023AA01",
+		"202301AA",
+		"20230101AA0000",
+		"2023010112AA00",
+		"202301011200AA",
+		"20230101120000.XYZ",
+	}
+	for _, inv := range invalids {
+		_, err := ParseTimestamp(inv)
+		if err == nil {
+			t.Errorf("expected error for invalid timestamp %q", inv)
+		}
+	}
+}

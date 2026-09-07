@@ -141,3 +141,80 @@ func TestTerserSubComponent(t *testing.T) {
 		t.Errorf("expected 'CHECK', got '%s'", val)
 	}
 }
+
+func TestTerserDotNotation(t *testing.T) {
+	msg, err := Parse(sampleADT)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	val, err := msg.Get("PID-5.1")
+	if err != nil || val != "DOE" {
+		t.Errorf("expected DOE, got %q (err: %v)", val, err)
+	}
+
+	val, err = msg.Get("PID.5.2")
+	if err != nil || val != "JOHN" {
+		t.Errorf("expected JOHN, got %q (err: %v)", val, err)
+	}
+}
+
+func TestTerserFieldRepetition(t *testing.T) {
+	raw := "MSH|^~\\&|S|F|R|F|20230101||ADT^A01|1|P|2.5\rPID|1||MRN123^^^MRN~DEA456^^^DEA"
+	msg, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// First repetition (0-based)
+	val, err := msg.Get("PID-3(0)-1")
+	if err != nil || val != "MRN123" {
+		t.Errorf("expected MRN123, got %q (err: %v)", val, err)
+	}
+
+	// Second repetition
+	val, err = msg.Get("PID-3(1)-1")
+	if err != nil || val != "DEA456" {
+		t.Errorf("expected DEA456, got %q (err: %v)", val, err)
+	}
+
+	val, err = msg.Get("PID-3(1)")
+	if err != nil || val != "DEA456^^^DEA" {
+		t.Errorf("expected DEA456^^^DEA, got %q (err: %v)", val, err)
+	}
+
+	// Out of range field repetition
+	_, err = msg.Get("PID-3(2)-1")
+	if err == nil {
+		t.Error("expected error for out-of-range field repetition")
+	}
+}
+
+func TestTerserGetAll(t *testing.T) {
+	raw := "MSH|^~\\&|S|F|R|F|20230101||ADT^A01|1|P|2.5\r" +
+		"PID|1||MRN123^^^MRN~DEA456^^^DEA\r" +
+		"OBX|1|NM|GLU||100|mg/dL\r" +
+		"OBX|2|NM|WBC||6.5|10*3/uL"
+	msg, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// GetAll across segments
+	vals, err := msg.GetAll("OBX-5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(vals) != 2 || vals[0] != "100" || vals[1] != "6.5" {
+		t.Errorf("expected [100, 6.5], got %v", vals)
+	}
+
+	// GetAll across field repetitions
+	ids, err := msg.GetAll("PID-3-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(ids) != 2 || ids[0] != "MRN123" || ids[1] != "DEA456" {
+		t.Errorf("expected [MRN123, DEA456], got %v", ids)
+	}
+}

@@ -76,3 +76,40 @@ func BenchmarkString(b *testing.B) {
 		_ = msg.String()
 	}
 }
+
+func BenchmarkEscape(b *testing.B) {
+	enc := DefaultEncodingChars()
+	input := "Doctor & Nurse notes with | and ^ and ~ characters."
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = Escape(input, &enc)
+	}
+}
+
+func BenchmarkBuildACK(b *testing.B) {
+	raw := "MSH|^~\\&|SENDER|FAC|RECV|FAC|20230101120000||ADT^A01|12345|P|2.5\rPID|1||MRN123^^^MRN||DOE^JOHN^M||19800101|M\rPV1|1|I|4EAST^401^1"
+	msg, _ := Parse(raw)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _ = msg.BuildACK("AA", "")
+	}
+}
+
+func BenchmarkBatchScanner(b *testing.B) {
+	var buf strings.Builder
+	buf.WriteString("FHS|^~\\&|BATCH\rBHS|^~\\&|BATCH")
+	for i := 0; i < 50; i++ {
+		buf.WriteString(fmt.Sprintf("\rMSH|^~\\&|S%d|F|R|F|20230101||ADT^A01|%d|P|2.5\rPID|1||MRN%d||DOE^JOHN", i, i, i))
+	}
+	buf.WriteString("\rBTS|50\rFTS|50")
+	raw := buf.String()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		scanner := NewBatchScanner(strings.NewReader(raw))
+		count := 0
+		for scanner.Scan() {
+			count++
+		}
+	}
+}

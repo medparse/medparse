@@ -264,3 +264,65 @@ func TestExtractorGetAll(t *testing.T) {
 		t.Errorf("expected 'I10', got '%s'", result["primary_dx"])
 	}
 }
+
+func TestFieldMapFallbackPaths(t *testing.T) {
+	fm := FieldMap{
+		"mrn":   "PID-3(1)-1|PID-3-1",
+		"phone": "PID-13-1|PID-13-7|PV1-3-1",
+	}
+
+	msg := parseTestMsg(t)
+
+	// PID-3(1)-1 doesn't exist, should fall back to PID-3-1 ("MRN123")
+	mrn, err := fm.Get(msg, "mrn")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if mrn != "MRN123" {
+		t.Errorf("expected MRN123 from fallback, got %q", mrn)
+	}
+
+	// PID-13 doesn't exist, falls back through to PV1-3-1 ("4EAST")
+	phone, err := fm.Get(msg, "phone")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if phone != "4EAST" {
+		t.Errorf("expected 4EAST from fallback chain, got %q", phone)
+	}
+}
+
+func TestFieldMapGetOrDefault(t *testing.T) {
+	fm := FieldMap{
+		"last_name": "PID-5-1",
+		"missing":   "PID-99",
+	}
+
+	msg := parseTestMsg(t)
+
+	if got := fm.GetOrDefault(msg, "last_name", "DEFAULT"); got != "DOE" {
+		t.Errorf("expected DOE, got %q", got)
+	}
+	if got := fm.GetOrDefault(msg, "missing", "DEFAULT"); got != "DEFAULT" {
+		t.Errorf("expected DEFAULT for missing field, got %q", got)
+	}
+	if got := fm.GetOrDefault(msg, "not_in_map", "DEFAULT"); got != "DEFAULT" {
+		t.Errorf("expected DEFAULT for unmapped key, got %q", got)
+	}
+}
+
+func TestSegmentWhereAll(t *testing.T) {
+	msg := parseTestMsg(t)
+	// Add an additional DG1 segment with type A
+	msg.AddSegment("DG1", "3", "", "E11.9^Type 2 Diabetes^ICD10", "", "20230101", "A")
+
+	extractAll := SegmentWhereAll("DG1", 6, "A", 3, 1)
+	codes, err := extractAll(msg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(codes) != 2 || codes[0] != "I10" || codes[1] != "E11.9" {
+		t.Errorf("expected [I10, E11.9], got %v", codes)
+	}
+}

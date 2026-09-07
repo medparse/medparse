@@ -119,3 +119,24 @@ func ExampleMessage_String() {
 	fmt.Println(raw[:3]) // starts with MSH
 	// Output: MSH
 }
+
+func ExampleNewMessage() {
+	msg := medparse.NewMessage("ADT", "A01", "2.5.1")
+	msg.AddSegment("PID", "1", "", "MRN123^^^MRN", "", "DOE^JANE")
+	msg.AddSegment("PV1", "1", "I", "4EAST")
+
+	name, _ := msg.Get("PID-5-1")
+	fmt.Println(name)
+	// Output: DOE
+}
+
+func ExampleMessage_GetAll() {
+	raw := "MSH|^~\\&|S|F|R|F|20230101||ORU^R01|1|P|2.5\r" +
+		"OBX|1|NM|GLU||100\r" +
+		"OBX|2|NM|WBC||6.5"
+	msg, _ := medparse.Parse(raw)
+
+	vals, _ := msg.GetAll("OBX-5")
+	fmt.Println(vals)
+	// Output: [100 6.5]
+}

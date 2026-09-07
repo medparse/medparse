@@ -360,3 +360,18 @@ func TestComponentAccess1Based(t *testing.T) {
 		t.Error("expected error for component index 0")
 	}
 }
+
+func TestParseReader(t *testing.T) {
+	reader := strings.NewReader(sampleADT)
+	msg, err := ParseReader(reader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(msg.Segments) != 3 {
+		t.Errorf("expected 3 segments, got %d", len(msg.Segments))
+	}
+	val, err := msg.Get("PID-5-1")
+	if err != nil || val != "DOE" {
+		t.Errorf("expected DOE, got %q (err: %v)", val, err)
+	}
+}

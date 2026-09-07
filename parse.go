@@ -1,6 +1,9 @@
 package medparse
 
-import "strings"
+import (
+	"io"
+	"strings"
+)
 
 // Parse parses a raw HL7v2 message string into a Message.
 //
@@ -55,6 +58,15 @@ func Parse(raw string) (*Message, error) {
 	}, nil
 }
 
+// ParseReader reads a raw HL7v2 message from an io.Reader and parses it into a Message.
+func ParseReader(r io.Reader) (*Message, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, &ParseError{Msg: "reading message: " + err.Error()}
+	}
+	return Parse(string(data))
+}
+
 // extractEncodingChars extracts encoding characters from the MSH segment.
 //
 // MSH layout: MSH|^~\&|...
@@ -81,12 +93,17 @@ func extractEncodingChars(msh string) (*EncodingChars, error) {
 // splitSegments splits a raw message into segment strings, handling \r, \n, and \r\n.
 func splitSegments(raw string) []string {
 	var result []string
-	for _, s := range strings.FieldsFunc(raw, func(r rune) bool {
-		return r == '\r' || r == '\n'
-	}) {
-		if len(s) > 0 {
-			result = append(result, s)
+	start := 0
+	for i := 0; i < len(raw); i++ {
+		if raw[i] == '\r' || raw[i] == '\n' {
+			if i > start {
+				result = append(result, raw[start:i])
+			}
+			start = i + 1
 		}
+	}
+	if start < len(raw) {
+		result = append(result, raw[start:])
 	}
 	return result
 }
@@ -138,18 +155,20 @@ func parseSegment(segStr string, enc *EncodingChars) (Segment, error) {
 
 // parseField parses a single field string, handling repetitions and components.
 func parseField(raw string, enc *EncodingChars) Field {
-	// Check for repetitions.
-	repParts := strings.Split(raw, string(enc.RepetitionSep))
+	repSep := enc.RepetitionSep
 
-	var repetitions []Field
-	if len(repParts) > 1 {
-		repetitions = make([]Field, len(repParts))
-		for i, r := range repParts {
-			repetitions[i] = parseSingleField(r, enc)
-		}
+	// Fast path: no repetitions in field.
+	if strings.IndexByte(raw, repSep) < 0 {
+		return parseSingleField(raw, enc)
 	}
 
-	// Parse the first (or only) value.
+	repParts := strings.Split(raw, string(repSep))
+	repetitions := make([]Field, len(repParts))
+	for i, r := range repParts {
+		repetitions[i] = parseSingleField(r, enc)
+	}
+
+	// Parse the first value as the primary field structure.
 	field := parseSingleField(repParts[0], enc)
 	field.Repetitions = repetitions
 
@@ -161,8 +180,18 @@ func parseField(raw string, enc *EncodingChars) Field {
 
 // parseSingleField parses a single field value (no repetition handling) into components.
 func parseSingleField(raw string, enc *EncodingChars) Field {
-	compParts := strings.Split(raw, string(enc.ComponentSep))
+	compSep := enc.ComponentSep
 
+	// Fast path: no components in field.
+	if strings.IndexByte(raw, compSep) < 0 {
+		comp := parseComponent(raw, enc)
+		return Field{
+			Value:      comp.Value,
+			Components: []Component{comp},
+		}
+	}
+
+	compParts := strings.Split(raw, string(compSep))
 	components := make([]Component, len(compParts))
 	for i, c := range compParts {
 		components[i] = parseComponent(c, enc)
@@ -176,7 +205,18 @@ func parseSingleField(raw string, enc *EncodingChars) Field {
 
 // parseComponent parses a component string, extracting sub-components.
 func parseComponent(raw string, enc *EncodingChars) Component {
-	subParts := strings.Split(raw, string(enc.SubComponentSep))
+	subSep := enc.SubComponentSep
+
+	// Fast path: no sub-components.
+	if strings.IndexByte(raw, subSep) < 0 {
+		val := decodeEscapes(raw, enc)
+		return Component{
+			Value:         val,
+			SubComponents: []string{val},
+		}
+	}
+
+	subParts := strings.Split(raw, string(subSep))
 	subs := make([]string, len(subParts))
 	for i, s := range subParts {
 		subs[i] = decodeEscapes(s, enc)

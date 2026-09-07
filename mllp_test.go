@@ -1,6 +1,10 @@
 package medparse
 
-import "testing"
+import (
+	"bytes"
+	"io"
+	"testing"
+)
 
 func TestDetectMLLP(t *testing.T) {
 	framed := "\x0bMSH|...\x1c\r"
@@ -60,5 +64,62 @@ func TestMLLPFramedParse(t *testing.T) {
 	}
 	if len(msg.Segments) != 2 {
 		t.Errorf("expected 2 segments, got %d", len(msg.Segments))
+	}
+}
+
+func TestWrapMLLP(t *testing.T) {
+	msg := "MSH|^~\\&|TEST"
+	wrapped := WrapMLLPString(msg)
+	expected := "\x0b" + msg + "\x1c\r"
+	if wrapped != expected {
+		t.Errorf("WrapMLLPString = %q, expected %q", wrapped, expected)
+	}
+	if !IsMLLPFramed([]byte(wrapped)) {
+		t.Error("wrapped string should be identified as MLLP framed")
+	}
+	stripped := StripMLLP(wrapped)
+	if stripped != msg {
+		t.Errorf("StripMLLP = %q, expected %q", stripped, msg)
+	}
+}
+
+func TestMLLPStreamingReaderAndWriter(t *testing.T) {
+	var buf bytes.Buffer
+	writer := NewMLLPWriter(&buf)
+
+	msg1 := "MSH|^~\\&|APP1||||20230101||ADT^A01|1|P|2.5"
+	msg2 := "MSH|^~\\&|APP2||||20230101||ADT^A02|2|P|2.5"
+
+	err := writer.WriteString(msg1)
+	if err != nil {
+		t.Fatalf("writer error: %v", err)
+	}
+	err = writer.WriteString(msg2)
+	if err != nil {
+		t.Fatalf("writer error: %v", err)
+	}
+
+	reader := NewMLLPReader(&buf)
+
+	got1, err := reader.ReadString()
+	if err != nil {
+		t.Fatalf("reading msg1: %v", err)
+	}
+	if got1 != msg1 {
+		t.Errorf("expected msg1 %q, got %q", msg1, got1)
+	}
+
+	got2, err := reader.ReadString()
+	if err != nil {
+		t.Fatalf("reading msg2: %v", err)
+	}
+	if got2 != msg2 {
+		t.Errorf("expected msg2 %q, got %q", msg2, got2)
+	}
+
+	// Next read should be EOF
+	_, err = reader.ReadString()
+	if err != io.EOF {
+		t.Errorf("expected EOF, got %v", err)
 	}
 }

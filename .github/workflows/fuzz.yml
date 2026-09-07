@@ -1,0 +1,32 @@
+name: Continuous Fuzzing
+
+on:
+  schedule:
+    # Run every Sunday at 02:00 UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: 'Duration to run each fuzz target (e.g. 1m, 3m, 5m)'
+        required: false
+        default: '3m'
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [FuzzParse, FuzzTerser]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run Fuzz ${{ matrix.target }}
+        run: |
+          FUZZ_TIME="${{ github.event.inputs.fuzztime || '3m' }}"
+          echo "Fuzzing ${{ matrix.target }} for ${FUZZ_TIME}..."
+          go test -v -fuzz=^${{ matrix.target }}$ -fuzztime=${FUZZ_TIME} .
